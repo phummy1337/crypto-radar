@@ -136,6 +136,31 @@
 
   .spark{width:60px;height:18px;display:block}
 
+  /* ---------- expandable chart row ---------- */
+  tbody tr.mover{cursor:pointer}
+  tbody tr.mover:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  tbody tr.mover.open{background:var(--surface-2)}
+  .caret{display:inline-block;color:var(--muted);font-size:9px;width:9px;transition:transform .15s}
+  tr.mover.open .caret{transform:rotate(90deg);color:var(--accent)}
+  tr.expander>td{padding:0;background:var(--surface-2);border-bottom:1px solid var(--line)}
+  .chartwrap{padding:12px 14px 14px}
+  .charthead{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:9px}
+  .charthead .tvsym{font-size:12px;color:var(--ink-2);font-weight:600}
+  .exlist{display:flex;gap:4px;flex-wrap:wrap}
+  .ex{
+    font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--line);
+    background:var(--surface);color:var(--muted);cursor:pointer;font-family:inherit;
+  }
+  .ex:hover{color:var(--ink-2)}
+  .ex[aria-pressed="true"]{border-color:var(--accent);color:var(--ink);background:#16293f}
+  .tvbox{height:470px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
+  .tvnote{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.6}
+  .closex{
+    margin-left:auto;background:none;border:1px solid var(--line);color:var(--muted);
+    border-radius:6px;font:inherit;font-size:11px;padding:3px 9px;cursor:pointer;
+  }
+  .closex:hover{color:var(--ink);border-color:var(--muted)}
+
   .empty{padding:26px 14px;color:var(--muted);font-size:12.5px;text-align:center}
   .note{
     margin:0 0 16px;padding:11px 13px;border-radius:var(--radius);font-size:12.5px;
@@ -365,7 +390,8 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
 
 // ---------------------------------------------------------------- state
 let DATA = null;
-const view = { movers: [] };
+let openRow = null;                   // the mover row whose chart is expanded, if any
+const view = { movers: [], rendered: [] };
 
 // ---------------------------------------------------------------- boot
 fetch('./data.json?t=' + Date.now())
@@ -451,7 +477,7 @@ function renderRegime(r) {
 }
 
 // ---------------------------------------------------------------- movers
-function moverRow(m) {
+function moverRow(m, i) {
   const chips = (m.reasons || []).map(t => {
     let c = 'chip';
     if (/late|already/.test(t)) c += ' late';
@@ -459,8 +485,10 @@ function moverRow(m) {
     else if (/σ|volume|turnover/.test(t)) c += ' vol';
     return `<span class="${c}" title="${esc(t)}">${esc(t)}</span>`;
   }).join('');
-  return `<tr>
+  return `<tr class="mover" data-i="${i}" tabindex="0" role="button" aria-expanded="false"
+      aria-label="${esc(m.sym)} — open chart">
     <td class="l"><div class="asset">
+      <span class="caret">▶</span>
       <img src="${esc(m.img)}" alt="" loading="lazy">
       <div><div class="sym">${esc(m.sym)} <span class="rk">#${m.rank ?? '—'}</span></div>
       <div class="nm">${esc(m.name)}</div></div></div></td>
@@ -495,6 +523,8 @@ function renderMovers() {
     return true;
   });
 
+  view.rendered = rows;               // index used by the chart expander
+  openRow = null;                     // tbody is about to be replaced wholesale
   const tb = document.querySelector('#tMovers tbody');
   tb.innerHTML = rows.length
     ? rows.map(moverRow).join('')
@@ -505,6 +535,167 @@ function renderMovers() {
 
 ['q','fSize','fScore','fFresh','fFlow'].forEach(id =>
   document.getElementById(id).addEventListener('input', renderMovers));
+
+// ---------------------------------------------------------------- TradingView
+// Free Advanced Chart widget: candlesticks + the full drawing toolbar.
+const TV_EXCHANGES = [
+  {id: 'BINANCE',  label: 'Binance',  quote: 'USDT'},
+  {id: 'BYBIT',    label: 'Bybit',    quote: 'USDT'},
+  {id: 'OKX',      label: 'OKX',      quote: 'USDT'},
+  {id: 'COINBASE', label: 'Coinbase', quote: 'USD'},
+  {id: 'MEXC',     label: 'MEXC',     quote: 'USDT'},
+  {id: 'GATEIO',   label: 'Gate',     quote: 'USDT'},
+  {id: 'CRYPTO',   label: 'Index',    quote: 'USD'},
+];
+
+// Wrapped / liquid-staking tokens rank in the top 500 but have no pair of their
+// own — chart the underlying asset instead of showing an invalid symbol.
+const TV_UNDERLYING = {
+  WETH:'ETH', STETH:'ETH', WSTETH:'ETH', WEETH:'ETH', WBETH:'ETH', RETH:'ETH',
+  EZETH:'ETH', RSETH:'ETH', METH:'ETH', CBETH:'ETH',
+  WBTC:'BTC', CBBTC:'BTC', LBTC:'BTC', SOLVBTC:'BTC', TBTC:'BTC', BTCB:'BTC',
+  MSOL:'SOL', JITOSOL:'SOL', JUPSOL:'SOL', BNSOL:'SOL',
+  WBNB:'BNB', WAVAX:'AVAX', WMATIC:'MATIC', WHYPE:'HYPE', WS:'S',
+  MIOTA:'IOTA', 'BSC-USD':'USDT',
+};
+
+const tvBase = sym => TV_UNDERLYING[sym] || sym;
+const tvSymbol = (sym, ex) => {
+  const e = TV_EXCHANGES.find(x => x.id === ex) || TV_EXCHANGES[0];
+  return `${e.id}:${tvBase(sym)}${e.quote}`;
+};
+
+let tvLoading = null;
+function loadTV() {
+  if (window.TradingView) return Promise.resolve(true);
+  if (tvLoading) return tvLoading;
+  tvLoading = new Promise(resolve => {
+    const s = document.createElement('script');
+    s.src = 'https://s3.tradingview.com/tv.js';
+    s.async = true;
+    s.onload = () => resolve(true);
+    s.onerror = () => resolve(false);   // resolve, never reject — we show a fallback
+    document.head.appendChild(s);
+  });
+  return tvLoading;
+}
+
+// Only one chart alive at a time — the widget is heavy.
+function closeChart() {
+  if (!openRow) return;
+  openRow.classList.remove('open');
+  openRow.setAttribute('aria-expanded', 'false');
+  openRow.nextElementSibling?.classList.contains('expander') &&
+    openRow.nextElementSibling.remove();
+  openRow = null;
+}
+
+function mountWidget(box, sym, ex) {
+  box.innerHTML = '';
+  const id = 'tv_' + Math.random().toString(36).slice(2);
+  box.id = id;
+  new TradingView.widget({
+    container_id: id,
+    symbol: tvSymbol(sym, ex),
+    interval: 'D',
+    timezone: 'Etc/UTC',
+    theme: 'dark',
+    style: '1',                 // candlesticks
+    locale: 'en',
+    toolbar_bg: '#141414',
+    backgroundColor: '#141414',
+    enable_publishing: false,
+    hide_side_toolbar: false,   // <- the drawing toolbar
+    allow_symbol_change: true,  // <- lets you correct a symbol we guessed wrong
+    withdateranges: true,
+    save_image: true,
+    details: false,
+    autosize: true,
+    // default the price axis to log scale (with auto-fit)
+    overrides: {
+      'mainSeriesProperties.priceAxisProperties.autoScale': true,
+      'mainSeriesProperties.priceAxisProperties.log': true,
+    },
+  });
+}
+
+async function openChart(tr) {
+  const m = view.rendered[+tr.dataset.i];
+  if (!m) return;
+  closeChart();
+
+  const cols = tr.children.length;
+  const exp = document.createElement('tr');
+  exp.className = 'expander';
+  exp.innerHTML = `<td colspan="${cols}"><div class="chartwrap">
+    <div class="charthead">
+      <span class="tvsym">${esc(m.name)} · <span id="tvSymLabel"></span></span>
+      <div class="exlist">${TV_EXCHANGES.map(e =>
+        `<button class="ex" data-ex="${e.id}" aria-pressed="false">${e.label}</button>`).join('')}</div>
+      <button class="closex">close</button>
+    </div>
+    <div class="tvbox"></div>
+    <div class="tvnote"></div>
+  </div></td>`;
+  tr.after(exp);
+  tr.classList.add('open');
+  tr.setAttribute('aria-expanded', 'true');
+  openRow = tr;
+
+  const box = exp.querySelector('.tvbox');
+  const note = exp.querySelector('.tvnote');
+  const label = exp.querySelector('#tvSymLabel');
+  const mapped = tvBase(m.sym) !== m.sym;
+
+  const ok = await loadTV();
+  if (!ok || !window.TradingView) {
+    box.innerHTML = `<div class="empty" style="padding:60px 14px">
+      Could not load TradingView (blocked by the network or an extension).
+      <a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol(m.sym,'BINANCE'))}"
+         target="_blank" rel="noopener">Open the chart on tradingview.com</a> instead.</div>`;
+    return;
+  }
+
+  let current = 'BINANCE';
+  const paint = ex => {
+    current = ex;
+    exp.querySelectorAll('.ex').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.ex === ex)));
+    label.textContent = tvSymbol(m.sym, ex);
+    mountWidget(box, m.sym, ex);
+    note.innerHTML =
+      (mapped ? `Charting <b>${esc(tvBase(m.sym))}</b> — ${esc(m.sym)} is a wrapped or staked
+                 form with no exchange pair of its own. ` : '') +
+      `If the symbol does not resolve, switch exchange above or search inside the chart.
+       Drawings stay put while this panel is open but are not saved after a reload —
+       TradingView only persists those for signed-in users on their own site.`;
+  };
+  paint(current);
+
+  exp.querySelector('.exlist').addEventListener('click', e => {
+    const b = e.target.closest('.ex');
+    if (b && b.dataset.ex !== current) paint(b.dataset.ex);
+  });
+  exp.querySelector('.closex').addEventListener('click', closeChart);
+  exp.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
+document.querySelector('#tMovers tbody').addEventListener('click', e => {
+  if (e.target.closest('a, button')) return;      // don't hijack links/controls
+  const tr = e.target.closest('tr.mover');
+  if (!tr) return;
+  if (tr === openRow) closeChart(); else openChart(tr);
+});
+
+document.querySelector('#tMovers tbody').addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const tr = e.target.closest('tr.mover');
+  if (!tr) return;
+  e.preventDefault();
+  if (tr === openRow) closeChart(); else openChart(tr);
+});
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeChart(); });
 
 // ---------------------------------------------------------------- sparklines
 // Points arrive inline on each mover, so this is pure formatting — no second fetch.
