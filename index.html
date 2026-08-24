@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Crypto Radar</title>
+<style>
+  :root{
+    color-scheme: dark;
+    --plane:#0d0d0d;
+    --surface:#141414;
+    --surface-2:#1b1b1a;
+    --line:#2c2c2a;
+    --ink:#ffffff;
+    --ink-2:#c3c2b7;
+    --muted:#898781;
+    --good:#0ca30c;
+    --critical:#d03b3b;
+    --warning:#fab219;
+    --accent:#3987e5;
+    --accent-2:#199e70;
+    --radius:10px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--plane); color:var(--ink);
+    font:14px/1.45 ui-sans-serif,-apple-system,"SF Pro Text",Inter,system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    padding:0 0 64px;
+  }
+  .num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  /* ---------- header ---------- */
+  header{
+    position:sticky;top:0;z-index:20;background:rgba(13,13,13,.92);
+    backdrop-filter:blur(8px);border-bottom:1px solid var(--line);
+    padding:14px 20px 0;
+  }
+  .brandrow{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  h1{font-size:17px;margin:0;letter-spacing:-.02em;font-weight:650}
+  .stamp{color:var(--muted);font-size:12px}
+  .badge{
+    font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);
+    color:var(--ink-2);background:var(--surface-2);letter-spacing:.02em;
+  }
+  .badge.warm{color:var(--accent-2);border-color:#1d4f3c}
+  .badge.cold{color:var(--warning);border-color:#5a4715}
+
+  /* ---------- regime strip ---------- */
+  .regime{display:flex;gap:10px;overflow-x:auto;padding:14px 0 4px;scrollbar-width:none}
+  .regime::-webkit-scrollbar{display:none}
+  .tile{
+    flex:0 0 auto;min-width:132px;background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--radius);padding:9px 12px;
+  }
+  .tile .k{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;white-space:nowrap}
+  .tile .v{font-size:18px;font-weight:600;letter-spacing:-.02em;margin-top:3px}
+  .tile .d{font-size:11.5px;margin-top:1px;color:var(--ink-2)}
+
+  /* ---------- tabs ---------- */
+  nav{display:flex;gap:2px;margin-top:10px;overflow-x:auto;scrollbar-width:none}
+  nav::-webkit-scrollbar{display:none}
+  nav button{
+    background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);
+    font:inherit;font-size:13px;padding:8px 13px;cursor:pointer;white-space:nowrap;
+  }
+  nav button:hover{color:var(--ink-2)}
+  nav button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+
+  /* ---------- layout ---------- */
+  main{padding:18px 20px 0;max-width:1500px}
+  section[hidden]{display:none}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:16px;overflow:hidden}
+  .phead{display:flex;align-items:baseline;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .phead h2{font-size:13.5px;margin:0;font-weight:600;letter-spacing:-.01em}
+  .phead .sub{font-size:11.5px;color:var(--muted)}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px}
+
+  /* ---------- filters ---------- */
+  .filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--surface-2)}
+  .filters label{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px}
+  select,input[type=search]{
+    background:var(--surface);color:var(--ink);border:1px solid var(--line);
+    border-radius:6px;padding:4px 7px;font:inherit;font-size:12px;
+  }
+  input[type=search]{min-width:150px}
+  .chkbox{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink-2);cursor:pointer}
+
+  /* ---------- tables ---------- */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{
+    text-align:right;font-weight:500;font-size:10.5px;color:var(--muted);
+    text-transform:uppercase;letter-spacing:.06em;padding:8px 10px;
+    border-bottom:1px solid var(--line);white-space:nowrap;position:sticky;top:0;
+    background:var(--surface);cursor:pointer;user-select:none;
+  }
+  th:first-child,td:first-child{text-align:left}
+  th.l,td.l{text-align:left}
+  th:hover{color:var(--ink-2)}
+  th[data-dir]::after{content:" ▾";color:var(--accent)}
+  th[data-dir="asc"]::after{content:" ▴";color:var(--accent)}
+  td{padding:8px 10px;text-align:right;border-bottom:1px solid rgba(44,44,42,.55);white-space:nowrap}
+  tbody tr:hover{background:var(--surface-2)}
+  tbody tr:last-child td{border-bottom:0}
+  .scroll{max-height:640px;overflow:auto}
+
+  .asset{display:flex;align-items:center;gap:8px}
+  .asset img{width:19px;height:19px;border-radius:50%;background:var(--surface-2);flex:0 0 auto}
+  .sym{font-weight:600}
+  .nm{color:var(--muted);font-size:11.5px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rk{color:var(--muted);font-size:11px}
+
+  /* polarity ALWAYS carries a sign + arrow, never color alone (CVD) */
+  .up{color:var(--good)}
+  .dn{color:var(--critical)}
+  .flat{color:var(--muted)}
+
+  /* score meter: sequential single hue */
+  .score{display:flex;align-items:center;gap:8px;justify-content:flex-end}
+  .meter{width:44px;height:5px;border-radius:3px;background:var(--surface-2);overflow:hidden;flex:0 0 auto}
+  .meter i{display:block;height:100%;background:var(--accent);border-radius:3px}
+  .sv{font-weight:600;min-width:34px;text-align:right}
+
+  .why{display:flex;gap:4px;flex-wrap:wrap;max-width:340px;justify-content:flex-start}
+  .chip{
+    font-size:10.5px;padding:1.5px 6px;border-radius:5px;background:var(--surface-2);
+    border:1px solid var(--line);color:var(--ink-2);white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis;max-width:220px;
+  }
+  .chip.late{color:var(--warning);border-color:#5a4715}
+  .chip.flow{color:var(--accent-2);border-color:#1d4f3c}
+  .chip.vol{color:var(--accent);border-color:#1e4374}
+
+  .spark{width:60px;height:18px;display:block}
+
+  .empty{padding:26px 14px;color:var(--muted);font-size:12.5px;text-align:center}
+  .note{
+    margin:0 0 16px;padding:11px 13px;border-radius:var(--radius);font-size:12.5px;
+    background:#2a2410;border:1px solid #5a4715;color:#f3d99b;
+  }
+  .note b{color:#fde9bd}
+  footer{padding:22px 20px;color:var(--muted);font-size:11.5px;max-width:1500px;line-height:1.7}
+  code{background:var(--surface-2);padding:1px 5px;border-radius:4px;font-size:11.5px}
+
+  @media (max-width:640px){
+    main,header{padding-left:12px;padding-right:12px}
+    .nm,.why{display:none}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brandrow">
+    <h1>Crypto Radar</h1>
+    <span class="badge" id="modeBadge">loading</span>
+    <span class="stamp" id="stamp"></span>
+  </div>
+  <div class="regime" id="regime"></div>
+  <nav id="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="radar">Radar</button>
+    <button role="tab" aria-selected="false" data-tab="narratives">Narratives</button>
+    <button role="tab" aria-selected="false" data-tab="onchain">Onchain</button>
+    <button role="tab" aria-selected="false" data-tab="flows">Capital Flow</button>
+    <button role="tab" aria-selected="false" data-tab="positioning">Positioning</button>
+  </nav>
+</header>
+
+<main>
+  <div id="coldNote"></div>
+
+  <!-- ============ RADAR ============ -->
+  <section id="tab-radar">
+    <div class="panel">
+      <div class="phead">
+        <h2>Early Momentum Scanner</h2>
+        <span class="sub" id="radarSub"></span>
+      </div>
+      <div class="filters">
+        <input type="search" id="q" placeholder="filter symbol / name…" aria-label="Filter">
+        <label>Size
+          <select id="fSize">
+            <option value="all">any</option>
+            <option value="mega">&gt; $10B</option>
+            <option value="large">$1–10B</option>
+            <option value="mid">$100M–1B</option>
+            <option value="small">&lt; $100M</option>
+          </select>
+        </label>
+        <label>Min score
+          <select id="fScore">
+            <option value="0">any</option>
+            <option value="40">40+</option>
+            <option value="50" selected>50+</option>
+            <option value="60">60+</option>
+          </select>
+        </label>
+        <label class="chkbox"><input type="checkbox" id="fFresh" checked> hide extended (&gt;150% / 30d)</label>
+        <label class="chkbox"><input type="checkbox" id="fFlow"> TVL-confirmed only</label>
+      </div>
+      <div class="scroll">
+        <table id="tMovers">
+          <thead><tr>
+            <th class="l" data-k="sym">Asset</th>
+            <th data-k="score" data-dir="desc">Score</th>
+            <th data-k="vol_z">Vol σ</th>
+            <th data-k="r1h">1h</th>
+            <th data-k="r24h">24h</th>
+            <th data-k="r7d">7d</th>
+            <th data-k="r30d">30d</th>
+            <th data-k="turnover">Turn</th>
+            <th data-k="mcap">Mcap</th>
+            <th class="l">Trend</th>
+            <th class="l">Why it is flagged</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ NARRATIVES ============ -->
+  <section id="tab-narratives" hidden>
+    <div class="grid2">
+      <div class="panel">
+        <div class="phead"><h2>Sector Rotation</h2><span class="sub">established narratives &gt; $100M</span></div>
+        <div class="scroll"><table id="tCats"><thead><tr>
+          <th class="l" data-k="name">Narrative</th>
+          <th data-k="chg24" data-dir="desc">24h</th>
+          <th data-k="chg3d">3d</th>
+          <th data-k="accel">Accel</th>
+          <th data-k="mcap">Mcap</th>
+          <th data-k="vol">Vol</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+      <div class="panel">
+        <div class="phead"><h2>Emerging Narratives</h2><span class="sub">$5–100M and actively trading</span></div>
+        <div class="scroll"><table id="tEmerg"><thead><tr>
+          <th class="l" data-k="name">Narrative</th>
+          <th data-k="chg24" data-dir="desc">24h</th>
+          <th data-k="turnover">Turn</th>
+          <th data-k="mcap">Mcap</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="phead"><h2>Retail Attention</h2><span class="sub">most-searched on CoinGecko right now — an attention spike, not an endorsement</span></div>
+      <div id="trending" style="display:flex;gap:8px;flex-wrap:wrap;padding:13px 14px"></div>
+    </div>
+  </section>
+
+  <!-- ============ ONCHAIN ============ -->
+  <section id="tab-onchain" hidden>
+    <div class="grid2">
+      <div class="panel">
+        <div class="phead"><h2>Fresh Launches</h2><span class="sub">new pools · ≥$25k liquidity · ≥$20k volume</span></div>
+        <div class="scroll"><table id="tNew"><thead><tr>
+          <th class="l" data-k="name">Pool</th>
+          <th data-k="score" data-dir="desc">Score</th>
+          <th data-k="age_h">Age</th>
+          <th data-k="liq">Liq</th>
+          <th data-k="vol24h">Vol 24h</th>
+          <th data-k="churn">Churn</th>
+          <th data-k="buy_ratio">Buy/Sell</th>
+          <th data-k="chg24h">24h</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+      <div class="panel">
+        <div class="phead"><h2>Trending Pools</h2><span class="sub">already running — check you are not late</span></div>
+        <div class="scroll"><table id="tHot"><thead><tr>
+          <th class="l" data-k="name">Pool</th>
+          <th data-k="liq">Liq</th>
+          <th data-k="vol24h">Vol 24h</th>
+          <th data-k="churn">Churn</th>
+          <th data-k="chg1h">1h</th>
+          <th data-k="chg24h">24h</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FLOWS ============ -->
+  <section id="tab-flows" hidden>
+    <div class="grid2">
+      <div class="panel">
+        <div class="phead"><h2>TVL Momentum</h2><span class="sub">real deposits, 7d — capital voting</span></div>
+        <div class="scroll"><table id="tTvl"><thead><tr>
+          <th class="l" data-k="name">Protocol</th><th data-k="chg7d" data-dir="desc">7d</th>
+          <th data-k="chg1d">24h</th><th data-k="value">TVL</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+      <div class="panel">
+        <div class="phead"><h2>Fee Revenue Growth</h2><span class="sub">7d — usage that actually pays</span></div>
+        <div class="scroll"><table id="tFees"><thead><tr>
+          <th class="l" data-k="name">Protocol</th><th data-k="chg7d" data-dir="desc">7d</th>
+          <th data-k="chg1d">24h</th><th data-k="value">Fees 24h</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+      <div class="panel">
+        <div class="phead"><h2>DEX Volume Growth</h2><span class="sub">7d</span></div>
+        <div class="scroll"><table id="tDex"><thead><tr>
+          <th class="l" data-k="name">DEX</th><th data-k="chg7d" data-dir="desc">7d</th>
+          <th data-k="chg1d">24h</th><th data-k="value">Vol 24h</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ POSITIONING ============ -->
+  <section id="tab-positioning" hidden>
+    <div class="grid2">
+      <div class="panel">
+        <div class="phead"><h2>Crowded Longs</h2><span class="sub" id="baseNote">highest perp funding — late-stage, squeeze risk</span></div>
+        <div class="scroll"><table id="tLong"><thead><tr>
+          <th class="l" data-k="sym">Asset</th><th data-k="funding_apr" data-dir="desc">Funding APR</th>
+          <th data-k="chg24">24h</th><th data-k="oi_usd">OI</th><th data-k="vol24h">Vol</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+      <div class="panel">
+        <div class="phead"><h2>Crowded Shorts</h2><span class="sub">negative funding — shorts pay longs; squeeze fuel</span></div>
+        <div class="scroll"><table id="tShort"><thead><tr>
+          <th class="l" data-k="sym">Asset</th><th data-k="funding_apr" data-dir="asc">Funding APR</th>
+          <th data-k="chg24">24h</th><th data-k="oi_usd">OI</th><th data-k="vol24h">Vol</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer id="foot"></footer>
+
+<script>
+// ---------------------------------------------------------------- formatting
+const fmtUsd = (v, d = 1) => {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  const a = Math.abs(v);
+  if (a >= 1e12) return '$' + (v / 1e12).toFixed(2) + 'T';
+  if (a >= 1e9)  return '$' + (v / 1e9).toFixed(d) + 'B';
+  if (a >= 1e6)  return '$' + (v / 1e6).toFixed(d) + 'M';
+  if (a >= 1e3)  return '$' + (v / 1e3).toFixed(0) + 'k';
+  return '$' + v.toFixed(2);
+};
+const fmtPrice = v => {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  if (v >= 1000) return '$' + v.toLocaleString('en-US', {maximumFractionDigits: 0});
+  if (v >= 1) return '$' + v.toFixed(2);
+  if (v >= 0.01) return '$' + v.toFixed(4);
+  return '$' + v.toPrecision(3);
+};
+const num = v => (v === null || v === undefined || isNaN(v)) ? '—' : v.toFixed(2);
+
+// Polarity ALWAYS carries an explicit sign + arrow — color never encodes alone.
+function pct(v, dp = 1) {
+  if (v === null || v === undefined || isNaN(v)) return '<span class="flat">—</span>';
+  const cls = v > 0.05 ? 'up' : v < -0.05 ? 'dn' : 'flat';
+  const arrow = v > 0.05 ? '▲' : v < -0.05 ? '▼' : '·';
+  const sign = v > 0 ? '+' : '';
+  return `<span class="${cls} num">${arrow} ${sign}${v.toFixed(dp)}%</span>`;
+}
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// ---------------------------------------------------------------- state
+let DATA = null;
+const view = { movers: [] };
+
+// ---------------------------------------------------------------- boot
+fetch('./data.json?t=' + Date.now())
+  .then(r => { if (!r.ok) throw new Error('data.json ' + r.status); return r.json(); })
+  .then(d => { DATA = d; render(); })
+  .catch(e => {
+    document.getElementById('coldNote').innerHTML =
+      `<div class="note"><b>Could not load data.json.</b> ${esc(e.message)}. ` +
+      `Run <code>python3 refresh_data.py</code> to generate it.</div>`;
+  });
+
+function render() {
+  const d = DATA;
+  document.getElementById('stamp').textContent =
+    'updated ' + new Date(d.generated).toLocaleString(undefined,
+      {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+
+  const badge = document.getElementById('modeBadge');
+  const warm = d.signal_mode === 'history';
+  badge.textContent = warm
+    ? `${d.snapshots} snapshots · z-scores live`
+    : `cold start · ${d.snapshots}/${d.snapshots + d.snapshots_until_warm} snapshots`;
+  badge.className = 'badge ' + (warm ? 'warm' : 'cold');
+
+  if (!warm) {
+    document.getElementById('coldNote').innerHTML =
+      `<div class="note"><b>Cold start.</b> Volume anomaly needs ${d.snapshots_until_warm} more
+       snapshot(s) before it can compare each coin against its own history. Until then the
+       volume signal falls back to cross-sectional turnover ranking, which is noisier and
+       biased toward small caps. Everything else is fully live.</div>`;
+  }
+
+  renderRegime(d.regime);
+  view.movers = d.movers.slice();
+  renderMovers();
+
+  fillTable('tCats', d.categories.slice(0, 40), catRow);
+  fillTable('tEmerg', d.emerging_categories || [], emergRow);
+  fillTable('tNew', d.new_pools, poolRow);
+  fillTable('tHot', d.trending_pools, hotPoolRow);
+  fillTable('tTvl', d.flows.tvl, flowRow);
+  fillTable('tFees', d.flows.fees, flowRow);
+  fillTable('tDex', d.flows.dex_volume, flowRow);
+  fillTable('tLong', d.positioning.crowded_long, fundRow);
+  fillTable('tShort', d.positioning.crowded_short, fundRow);
+  if (d.positioning.baseline_apr != null) {
+    document.getElementById('baseNote').textContent =
+      `funding above Hyperliquid's neutral ${d.positioning.baseline_apr.toFixed(0)}% floor — late-stage, squeeze risk`;
+  }
+
+  document.getElementById('trending').innerHTML = (d.trending || []).map(t =>
+    `<span class="chip" style="font-size:12px;padding:5px 9px;display:flex;align-items:center;gap:6px">
+      <img src="${esc(t.thumb)}" width="16" height="16" style="border-radius:50%" alt="">
+      <b>${esc(t.sym)}</b> <span style="color:var(--muted)">#${t.rank ?? '—'}</span></span>`).join('')
+    || '<span class="empty">no trending data</span>';
+
+  const bad = Object.entries(d.sources_ok).filter(([, v]) => !v).map(([k]) => k);
+  document.getElementById('foot').innerHTML =
+    `Sources: CoinGecko · DefiLlama · GeckoTerminal · Hyperliquid · alternative.me — all keyless, all free.` +
+    (bad.length ? ` <span style="color:var(--warning)">Unavailable this run: ${bad.join(', ')}.</span>` : '') +
+    `<br>Scanning ${d.universe_size} assets. Score = 0.35·volume-anomaly + 0.30·ignition + 0.20·turnover
+     + 0.15·flow-confirmation − 0.10·crowding. Signals describe what is statistically unusual;
+     they are not predictions, and none of this is financial advice.`;
+}
+
+// ---------------------------------------------------------------- regime
+function renderRegime(r) {
+  const alt = r.breadth_7d;
+  const altLabel = alt === null || alt === undefined ? '—'
+    : alt >= 55 ? 'alts leading' : alt >= 35 ? 'mixed' : 'BTC leading';
+  const tiles = [
+    ['Total mcap', fmtUsd(r.total_mcap), pct(r.mcap_chg24)],
+    ['BTC dominance', (r.btc_dom ?? 0).toFixed(1) + '%', `ETH ${(r.eth_dom ?? 0).toFixed(1)}%`],
+    ['Breadth 7d', alt === null || alt === undefined ? '—' : Math.round(alt) + '%',
+      `${altLabel} · BTC ${r.btc_7d >= 0 ? '+' : ''}${(r.btc_7d ?? 0).toFixed(1)}%`],
+    ['Fear &amp; Greed', (r.fng ?? '—'), `${esc(r.fng_label ?? '')} · was ${r.fng_prev_week ?? '—'} 7d ago`],
+    ['Stablecoin supply', fmtUsd(r.stable_supply), 'dry powder'],
+    ['24h volume', fmtUsd(r.total_volume), 'market-wide'],
+  ];
+  document.getElementById('regime').innerHTML = tiles.map(([k, v, d]) =>
+    `<div class="tile"><div class="k">${k}</div><div class="v num">${v}</div><div class="d num">${d}</div></div>`
+  ).join('');
+}
+
+// ---------------------------------------------------------------- movers
+function moverRow(m) {
+  const chips = (m.reasons || []).map(t => {
+    let c = 'chip';
+    if (/late|already/.test(t)) c += ' late';
+    else if (/TVL|funding/.test(t)) c += ' flow';
+    else if (/σ|volume|turnover/.test(t)) c += ' vol';
+    return `<span class="${c}" title="${esc(t)}">${esc(t)}</span>`;
+  }).join('');
+  return `<tr>
+    <td class="l"><div class="asset">
+      <img src="${esc(m.img)}" alt="" loading="lazy">
+      <div><div class="sym">${esc(m.sym)} <span class="rk">#${m.rank ?? '—'}</span></div>
+      <div class="nm">${esc(m.name)}</div></div></div></td>
+    <td><div class="score"><span class="meter"><i style="width:${Math.max(2, m.score)}%"></i></span>
+      <span class="sv num">${m.score.toFixed(0)}</span></div></td>
+    <td class="num">${m.vol_z === null || m.vol_z === undefined ? '<span class="flat">—</span>' : m.vol_z.toFixed(1)}</td>
+    <td>${pct(m.r1h)}</td><td>${pct(m.r24h)}</td><td>${pct(m.r7d)}</td><td>${pct(m.r30d, 0)}</td>
+    <td class="num">${m.turnover ? m.turnover.toFixed(2) : '—'}</td>
+    <td class="num">${fmtUsd(m.mcap)}</td>
+    <td class="l">${spark(m.spark)}</td>
+    <td class="l"><div class="why">${chips}</div></td>
+  </tr>`;
+}
+
+function renderMovers() {
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  const size = document.getElementById('fSize').value;
+  const minScore = +document.getElementById('fScore').value;
+  const fresh = document.getElementById('fFresh').checked;
+  const flowOnly = document.getElementById('fFlow').checked;
+
+  const rows = view.movers.filter(m => {
+    if (m.score < minScore) return false;
+    if (q && !(m.sym.toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q))) return false;
+    if (fresh && m.r30d !== null && m.r30d !== undefined && m.r30d > 150) return false;
+    if (flowOnly && !(m.tvl_7d !== null && m.tvl_7d !== undefined && m.tvl_7d > 0)) return false;
+    const mc = m.mcap || 0;
+    if (size === 'mega'  && mc < 1e10) return false;
+    if (size === 'large' && (mc < 1e9 || mc >= 1e10)) return false;
+    if (size === 'mid'   && (mc < 1e8 || mc >= 1e9)) return false;
+    if (size === 'small' && mc >= 1e8) return false;
+    return true;
+  });
+
+  const tb = document.querySelector('#tMovers tbody');
+  tb.innerHTML = rows.length
+    ? rows.map(moverRow).join('')
+    : `<tr><td colspan="11" class="empty">Nothing clears these filters right now — that is itself a signal. Loosen the score threshold or size band.</td></tr>`;
+  document.getElementById('radarSub').textContent =
+    `${rows.length} of ${view.movers.length} flagged · scored against ${DATA.universe_size} assets`;
+}
+
+['q','fSize','fScore','fFresh','fFlow'].forEach(id =>
+  document.getElementById(id).addEventListener('input', renderMovers));
+
+// ---------------------------------------------------------------- sparklines
+// Points arrive inline on each mover, so this is pure formatting — no second fetch.
+function spark(pts) {
+  if (!pts || pts.length < 4) return '<span class="flat">—</span>';
+  const lo = Math.min(...pts), hi = Math.max(...pts), rng = hi - lo || 1;
+  const w = 60, h = 18, step = w / (pts.length - 1);
+  const d = pts.map((v, i) =>
+    `${i ? 'L' : 'M'}${(i * step).toFixed(1)},${(h - 1 - ((v - lo) / rng) * (h - 2)).toFixed(1)}`).join('');
+  const rising = pts[pts.length - 1] >= pts[0];
+  const pctMove = ((pts[pts.length - 1] - pts[0]) / pts[0]) * 100;
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" role="img"
+    aria-label="${pctMove >= 0 ? 'up' : 'down'} ${Math.abs(pctMove).toFixed(1)}% over the tracked window">
+    <path d="${d}" fill="none" stroke="${rising ? 'var(--good)' : 'var(--critical)'}"
+          stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+
+// ---------------------------------------------------------------- row builders
+const catRow = c => `<tr>
+  <td class="l">${esc(c.name)}</td><td>${pct(c.chg24)}</td>
+  <td>${c.chg3d === null || c.chg3d === undefined ? '<span class="flat">—</span>' : pct(c.chg3d)}</td>
+  <td>${c.accel === null || c.accel === undefined ? '<span class="flat">—</span>' : pct(c.accel)}</td>
+  <td class="num">${fmtUsd(c.mcap)}</td><td class="num">${fmtUsd(c.vol)}</td></tr>`;
+
+const emergRow = c => `<tr>
+  <td class="l">${esc(c.name)}</td><td>${pct(c.chg24)}</td>
+  <td class="num">${c.turnover ? c.turnover.toFixed(2) : '—'}</td>
+  <td class="num">${fmtUsd(c.mcap)}</td></tr>`;
+
+const poolName = p => `<td class="l"><a href="https://www.geckoterminal.com/${esc(p.net)}/pools/${esc(p.address)}"
+  target="_blank" rel="noopener">${esc(p.name)}</a>
+  <span class="rk">${esc(p.net)}</span></td>`;
+
+const poolRow = p => `<tr>${poolName(p)}
+  <td><div class="score"><span class="meter"><i style="width:${Math.max(2, p.score)}%"></i></span>
+    <span class="sv num">${p.score.toFixed(0)}</span></div></td>
+  <td class="num">${p.age_h === null || p.age_h === undefined ? '—' : p.age_h.toFixed(0) + 'h'}</td>
+  <td class="num">${fmtUsd(p.liq)}</td><td class="num">${fmtUsd(p.vol24h)}</td>
+  <td class="num">${p.churn.toFixed(1)}×</td><td class="num">${p.buy_ratio.toFixed(2)}</td>
+  <td>${pct(p.chg24h)}</td></tr>`;
+
+const hotPoolRow = p => `<tr>${poolName(p)}
+  <td class="num">${fmtUsd(p.liq)}</td><td class="num">${fmtUsd(p.vol24h)}</td>
+  <td class="num">${p.churn.toFixed(1)}×</td><td>${pct(p.chg1h)}</td><td>${pct(p.chg24h)}</td></tr>`;
+
+const flowRow = f => `<tr>
+  <td class="l"><div class="asset">${f.logo ? `<img src="${esc(f.logo)}" alt="" loading="lazy">` : ''}
+    <div><div class="sym">${esc(f.name)}</div><div class="nm">${esc(f.category || '')}</div></div></div></td>
+  <td>${pct(f.chg7d)}</td><td>${pct(f.chg1d)}</td><td class="num">${fmtUsd(f.value)}</td></tr>`;
+
+const fundRow = f => `<tr>
+  <td class="l"><span class="sym">${esc(f.sym)}</span></td>
+  <td>${pct(f.funding_apr)}</td><td>${pct(f.chg24)}</td>
+  <td class="num">${fmtUsd(f.oi_usd)}</td><td class="num">${fmtUsd(f.vol24h)}</td></tr>`;
+
+function fillTable(id, rows, fn) {
+  const tb = document.querySelector('#' + id + ' tbody');
+  if (!tb) return;
+  const cols = document.querySelectorAll('#' + id + ' thead th').length;
+  tb.innerHTML = rows && rows.length
+    ? rows.map(fn).join('')
+    : `<tr><td colspan="${cols}" class="empty">nothing here this run</td></tr>`;
+  tb.__rows = rows || [];
+  tb.__fn = fn;
+}
+
+// ---------------------------------------------------------------- sorting
+document.querySelectorAll('th[data-k]').forEach(th => th.addEventListener('click', () => {
+  const table = th.closest('table');
+  const key = th.dataset.k;
+  const dir = th.dataset.dir === 'desc' ? 'asc' : 'desc';
+  table.querySelectorAll('th').forEach(o => o.removeAttribute('data-dir'));
+  th.dataset.dir = dir;
+  const mul = dir === 'desc' ? -1 : 1;
+  const cmp = (a, b) => {
+    const x = a[key], y = b[key];
+    const xn = x === null || x === undefined, yn = y === null || y === undefined;
+    if (xn && yn) return 0;
+    if (xn) return 1;          // nulls always sink, regardless of direction
+    if (yn) return -1;
+    return typeof x === 'string' ? mul * x.localeCompare(y) : mul * (x - y);
+  };
+  if (table.id === 'tMovers') { view.movers.sort(cmp); renderMovers(); return; }
+  const tb = table.querySelector('tbody');
+  if (!tb.__rows) return;
+  tb.__rows.sort(cmp);
+  tb.innerHTML = tb.__rows.map(tb.__fn).join('');
+}));
+
+// ---------------------------------------------------------------- tabs
+document.getElementById('tabs').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#tabs button').forEach(x =>
+    x.setAttribute('aria-selected', String(x === b)));
+  document.querySelectorAll('main > section').forEach(s =>
+    s.hidden = s.id !== 'tab-' + b.dataset.tab);
+});
+</script>
+</body>
+</html>

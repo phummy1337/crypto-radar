@@ -1,0 +1,61 @@
+name: Refresh radar data
+
+on:
+  schedule:
+    # Every 2 hours. The signal engine compares each asset against its own
+    # trailing history, so cadence sets the resolution of the z-scores —
+    # 12 snapshots/day means ~24h of context per 12 points.
+    - cron: "10 */2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Never let two refreshes race on history.json.
+concurrency:
+  group: refresh-data
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch and score
+        run: python3 refresh_data.py
+
+      - name: Commit snapshot
+        run: |
+          git config user.name "radar-bot"
+          git config user.email "actions@github.com"
+
+          if git diff --quiet -- data.json history.json; then
+            echo "No change — nothing to commit."
+            exit 0
+          fi
+
+          git add data.json history.json
+          git commit -m "data: refresh $(date -u '+%Y-%m-%d %H:%M UTC')"
+
+          # Local pushes collide with the cron constantly. Rebase onto whatever
+          # is on the remote and keep OUR freshly generated snapshot on conflict.
+          for i in 1 2 3; do
+            if git push; then
+              echo "pushed"; exit 0
+            fi
+            echo "push rejected (attempt $i) — rebasing"
+            git fetch origin "${GITHUB_REF_NAME}"
+            git rebase "origin/${GITHUB_REF_NAME}" || {
+              git checkout --ours data.json history.json
+              git add data.json history.json
+              GIT_EDITOR=true git rebase --continue || git rebase --skip
+            }
+          done
+          echo "Could not push after 3 attempts" >&2
+          exit 1
