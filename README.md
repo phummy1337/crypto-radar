@@ -18,6 +18,22 @@ history** and against the market cross-section, then explains why each name is f
 | **Capital Flow** | Where are TVL, fees, and DEX volume actually accelerating — real capital, not just price. |
 | **Positioning** | Which trades are already crowded (funding extremes), so you can tell early from late. |
 
+### Charts
+
+Clicking any row in the Radar expands a TradingView Advanced Chart inline — candlesticks
+with the full drawing toolbar, defaulted to **log scale** (percentage moves are what
+matter across assets spanning three orders of magnitude, and a linear axis flattens the
+early base that is exactly the part worth seeing).
+
+Symbols are guessed as `BINANCE:{SYM}USDT`, with one-click switching to Bybit, OKX,
+Coinbase, MEXC, Gate, or TradingView's own index feed, plus in-widget symbol search when
+the guess is wrong. Wrapped and staked tokens (WBTC, stETH, JitoSOL…) chart their
+underlying asset, since they have no exchange pair of their own.
+
+Drawings persist while the panel is open but are **not** saved across reloads — the free
+widget cannot do that; TradingView only persists layouts for signed-in users on its own
+site.
+
 ### The score
 
 ```
