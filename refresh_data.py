@@ -244,6 +244,169 @@ def get_hyperliquid():
     return rows
 
 
+# --------------------------------------------------------------------- BTC macro
+
+# 200-week MA needs 1400 days of history before it produces a single value, plus
+# whatever window we want to chart on top of that.
+# 1400 days of lead-in for the 200W MA, plus the full charted window on top, so
+# every plotted day has a 200W value rather than the line starting mid-chart.
+BTC_HISTORY_DAYS = 2200
+MA_WINDOWS = {"ma50": 50, "ma100": 100, "ma200": 200, "ma200w": 1400}
+
+
+def get_btc_price_history(days=BTC_HISTORY_DAYS):
+    """Daily BTC close from CoinMetrics' community tier — free, keyless, since 2010."""
+    start = datetime.now(timezone.utc).timestamp() - days * 86400
+    start_s = datetime.fromtimestamp(start, timezone.utc).strftime("%Y-%m-%d")
+    url = (
+        "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics"
+        f"?assets=btc&metrics=PriceUSD&frequency=1d&page_size=10000&start_time={start_s}"
+    )
+    out, guard = [], 0
+    while url and guard < 12:
+        d = fetch(url)
+        if not d:
+            break
+        for row in d.get("data", []):
+            p = safe(row.get("PriceUSD"))
+            if p:
+                out.append({"t": row["time"][:10], "p": p})
+        url = d.get("next_page_url")
+        guard += 1
+        if url:
+            time.sleep(1)
+    out.sort(key=lambda r: r["t"])
+    return out
+
+
+def compute_mas(series):
+    """Trailing simple moving averages, aligned to the price series."""
+    prices = [r["p"] for r in series]
+    mas = {}
+    for name, w in MA_WINDOWS.items():
+        vals, run = [], 0.0
+        for i, p in enumerate(prices):
+            run += p
+            if i >= w:
+                run -= prices[i - w]
+            vals.append(run / w if i >= w - 1 else None)
+        mas[name] = vals
+    return mas
+
+
+def get_fng_history(limit=0):
+    """Full Fear & Greed history (limit=0 returns everything back to Feb 2018)."""
+    d = fetch(f"https://api.alternative.me/fng/?limit={limit}&format=json") or {}
+    rows = []
+    for r in d.get("data", []):
+        ts = safe(r.get("timestamp"))
+        v = safe(r.get("value"))
+        if ts and v is not None:
+            rows.append(
+                {"t": datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d"),
+                 "v": v}
+            )
+    rows.sort(key=lambda r: r["t"])
+    return rows
+
+
+def get_btc_derivatives():
+    """
+    Aggregate BTC perp funding + open interest.
+
+    Binance and Bybit both geo-block US/CI infrastructure (451 / CloudFront 403),
+    so the aggregate covers the venues that actually answer: OKX and Hyperliquid.
+    It is a real cross-venue aggregate, just not a whole-market one — labelled as
+    such in the UI rather than passed off as total market OI.
+    """
+    venues = []
+
+    ok_f = fetch("https://www.okx.com/api/v5/public/funding-rate?instId=BTC-USDT-SWAP")
+    ok_o = fetch(
+        "https://www.okx.com/api/v5/public/open-interest?instType=SWAP&instId=BTC-USDT-SWAP"
+    )
+    if ok_f and ok_o and ok_f.get("data") and ok_o.get("data"):
+        f = safe(ok_f["data"][0].get("fundingRate"))
+        oi = safe(ok_o["data"][0].get("oiUsd"))
+        if f is not None and oi:
+            # OKX funding settles every 8h; normalise to hourly for comparability.
+            venues.append({"venue": "OKX", "funding_hr": f / 8.0, "oi_usd": oi})
+
+    hl = fetch(
+        "https://api.hyperliquid.xyz/info", method="POST", body={"type": "metaAndAssetCtxs"}
+    )
+    if hl and len(hl) >= 2:
+        for coin, ctx in zip(hl[0].get("universe", []), hl[1]):
+            if coin.get("name") == "BTC" and ctx:
+                mark = safe(ctx.get("markPx"), 0.0)
+                oi = safe(ctx.get("openInterest"), 0.0) * mark
+                venues.append(
+                    {"venue": "Hyperliquid", "funding_hr": safe(ctx.get("funding"), 0.0),
+                     "oi_usd": oi}
+                )
+                break
+
+    if not venues:
+        return None
+    total_oi = sum(v["oi_usd"] for v in venues)
+    # OI-weighted, so a thin venue's extreme print cannot swing the aggregate.
+    agg = (
+        sum(v["funding_hr"] * v["oi_usd"] for v in venues) / total_oi if total_oi else 0.0
+    )
+    return {
+        "venues": venues,
+        "agg_funding_hr": agg,
+        "agg_funding_apr": agg * 24 * 365 * 100,
+        "total_oi_usd": total_oi,
+    }
+
+
+def get_ibit():
+    """
+    IBIT fund state scraped from iShares' own product page.
+
+    ETF share count only changes through creation/redemption baskets, so
+    delta(shares) * NAV IS the flow — that is the actual mechanism, not a proxy.
+    No history is available anywhere free, so flows accrue from first run onward.
+    """
+    url = (
+        "https://www.ishares.com/us/products/333011/fund/"
+        "1467271812596.ajax?fileType=json&tab=all"
+    )
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
+        )
+        with urllib.request.urlopen(req, timeout=45, context=SSL_CTX) as r:
+            html = r.read().decode("utf-8", errors="ignore")
+    except Exception as e:
+        log(f"  ! IBIT fetch failed: {type(e).__name__}")
+        return None
+
+    import re
+
+    def grab(key):
+        m = re.search(
+            r'"%s":\{.*?"formattedValue":"([^"]+)"' % key, html, re.DOTALL
+        )
+        if not m:
+            return None
+        return safe(m.group(1).replace(",", ""))
+
+    shares = grab("sharesOutstanding")
+    aum = grab("totalNetAssetsFundLevel")
+    if not shares or not aum:
+        log("  ! IBIT parse failed — page layout may have changed")
+        return None
+    m = re.search(r'"formattedAsOfDate":"([^"]+)","name":"sharesOutstanding"', html)
+    return {
+        "shares": shares,
+        "aum_usd": aum,
+        "nav": aum / shares if shares else None,
+        "as_of": m.group(1) if m else None,
+    }
+
+
 def get_new_pools(networks=("solana", "eth", "base")):
     """Freshly created onchain pools — the earliest possible detection surface."""
     pools = []
@@ -752,6 +915,122 @@ def score_positioning(hl):
     }
 
 
+# Days of price/MA history shipped to the chart (the MAs themselves are computed
+# over the full 2000-day pull; this only bounds what the browser downloads).
+BTC_CHART_DAYS = 730
+
+
+def build_btc_macro(price_hist, fng_hist, derivs, ibit, hist, btc_mcap=None):
+    """Assemble the BTC macro panel: MAs, sentiment, positioning, ETF flow."""
+    out = {"available": {}}
+
+    # ---- price vs moving averages ----------------------------------------
+    if price_hist and len(price_hist) > 200:
+        mas = compute_mas(price_hist)
+        n = len(price_hist)
+        start = max(0, n - BTC_CHART_DAYS)
+        out["price"] = {
+            "t": [r["t"] for r in price_hist[start:]],
+            "p": [round(r["p"], 2) for r in price_hist[start:]],
+            **{k: [round(v, 2) if v is not None else None for v in mas[k][start:]]
+               for k in MA_WINDOWS},
+        }
+        spot = price_hist[-1]["p"]
+        out["ma_status"] = []
+        for key, label in (
+            ("ma50", "50D"), ("ma100", "100D"), ("ma200", "200D"), ("ma200w", "200W"),
+        ):
+            v = mas[key][-1]
+            out["ma_status"].append(
+                {
+                    "label": label,
+                    "value": round(v, 2) if v is not None else None,
+                    "pct": round(100.0 * (spot - v) / v, 2) if v else None,
+                }
+            )
+        out["spot"] = spot
+        out["available"]["mas"] = True
+
+    # ---- fear & greed -----------------------------------------------------
+    if fng_hist:
+        tail = fng_hist[-BTC_CHART_DAYS:]
+        out["fng"] = {"t": [r["t"] for r in tail], "v": [r["v"] for r in tail]}
+        out["available"]["fng"] = True
+
+    # ---- derivatives (accumulating) --------------------------------------
+    if derivs:
+        out["derivs"] = derivs
+        out["available"]["derivs"] = True
+        if btc_mcap:
+            # OI as a share of market cap — the cleanest keyless leverage proxy.
+            out["derivs"]["oi_pct_mcap"] = 100.0 * derivs["total_oi_usd"] / btc_mcap
+
+    # ---- IBIT -------------------------------------------------------------
+    if ibit:
+        out["ibit"] = dict(ibit)
+        out["available"]["ibit"] = True
+
+    # ---- series accumulated across runs ----------------------------------
+    b = hist.get("btc") or {}
+    ts = b.get("t") or []
+    if ts:
+        out["series"] = {
+            "t": ts[-400:],
+            "funding": (b.get("fund") or [])[-400:],
+            "oi": (b.get("oi") or [])[-400:],
+            "ibit_shares": (b.get("ibit_shares") or [])[-400:],
+            "ibit_aum": (b.get("ibit_aum") or [])[-400:],
+        }
+        out["ibit_flows"] = ibit_flows(b, ibit)
+    return out
+
+
+def ibit_flows(b, ibit):
+    """
+    Derive creation/redemption flow from the change in shares outstanding.
+
+    Returns None until enough history exists — flows are a difference, so the
+    first run cannot produce one no matter how the data is dressed up.
+    """
+    shares = [s for s in (b.get("ibit_shares") or []) if s]
+    if not ibit or len(shares) < 2:
+        return None
+    nav = ibit.get("nav")
+    if not nav:
+        return None
+    now = ibit["shares"]
+
+    def flow_over(k):
+        if len(shares) <= k:
+            return None
+        prev = shares[-1 - k]
+        return (now - prev) * nav if prev else None
+
+    # At a 2-hourly cron: 12 snapshots ~ 1 day, 84 ~ 1 week.
+    return {
+        "daily": flow_over(12),
+        "weekly": flow_over(84),
+        "since_first": (now - shares[0]) * nav,
+        "snapshots": len(shares),
+    }
+
+
+def append_btc_history(hist, stamp, derivs, ibit):
+    """One compact row per run for the accumulating BTC macro series."""
+    b = hist.setdefault(
+        "btc", {"t": [], "fund": [], "oi": [], "ibit_shares": [], "ibit_aum": []}
+    )
+    b["t"].append(stamp)
+    b["fund"].append(round(derivs["agg_funding_hr"], 9) if derivs else None)
+    b["oi"].append(_round_big(derivs["total_oi_usd"]) if derivs else None)
+    b["ibit_shares"].append(_round_big(ibit["shares"]) if ibit else None)
+    b["ibit_aum"].append(_round_big(ibit["aum_usd"]) if ibit else None)
+    for k in ("t", "fund", "oi", "ibit_shares", "ibit_aum"):
+        if len(b[k]) > 1000:
+            b[k] = b[k][-1000:]
+    return hist
+
+
 def build_regime(g, fng, stables, markets):
     """Top-of-page context: is this an environment where alt risk gets paid?"""
     total_mc = safe((g.get("total_market_cap") or {}).get("usd"))
@@ -831,6 +1110,16 @@ def main():
     stables = get_stablecoins()
     log(f"  protocols={len(protocols)} dexs={len(dexs)} fees={len(fees)} stables={len(stables)}")
 
+    log("Fetching BTC macro...")
+    btc_prices = get_btc_price_history()
+    fng_hist = get_fng_history()
+    derivs = get_btc_derivatives()
+    ibit = get_ibit()
+    log(
+        f"  btc_days={len(btc_prices)} fng_days={len(fng_hist)} "
+        f"derivs={'ok' if derivs else 'FAILED'} ibit={'ok' if ibit else 'FAILED'}"
+    )
+
     log("Fetching positioning + onchain...")
     hl = get_hyperliquid()
     new_pools = get_new_pools()
@@ -853,6 +1142,7 @@ def main():
     hist = load_history()
     prior = len(hist["snapshots"])
     hist = append_history(hist, stamp, markets, categories)
+    hist = append_btc_history(hist, stamp, derivs, ibit)
     log(f"  snapshots: {prior} -> {len(hist['snapshots'])} (max {MAX_SNAPSHOTS})")
 
     log("Scoring...")
@@ -863,6 +1153,10 @@ def main():
     fresh = score_new_pools(new_pools)
     hot_pools = score_new_pools(trend_pools)
     regime = build_regime(g, fng, stables, markets)
+    btc_mcap = next(
+        (safe(c.get("market_cap")) for c in markets if c.get("id") == "bitcoin"), None
+    )
+    btc_macro = build_btc_macro(btc_prices, fng_hist, derivs, ibit, hist, btc_mcap)
 
     # Inline sparkline points for just the rows we actually render. history.json
     # grows to ~2.7 MB at full depth and the browser has no reason to download it.
@@ -879,6 +1173,7 @@ def main():
         "signal_mode": "history" if n_snap >= MIN_SNAPSHOTS_FOR_Z else "cold",
         "snapshots_until_warm": max(0, MIN_SNAPSHOTS_FOR_Z - n_snap),
         "regime": regime,
+        "btc_macro": btc_macro,
         "categories": cats,
         "emerging_categories": emerging_cats[:20],
         "trending": [
@@ -907,6 +1202,9 @@ def main():
             "pools": bool(new_pools or trend_pools),
             "stables": bool(stables),
             "fng": bool(fng),
+            "btc_prices": bool(btc_prices),
+            "btc_derivs": bool(derivs),
+            "ibit": bool(ibit),
         },
     }
 

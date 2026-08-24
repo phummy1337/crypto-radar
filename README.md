@@ -17,6 +17,26 @@ history** and against the market cross-section, then explains why each name is f
 | **Onchain** | What launched in the last 48h with real liquidity and buy pressure? |
 | **Capital Flow** | Where are TVL, fees, and DEX volume actually accelerating — real capital, not just price. |
 | **Positioning** | Which trades are already crowded (funding extremes), so you can tell early from late. |
+| **BTC Macro** | BTC against its 50/100/200-day and 200-week MAs, Fear & Greed history, aggregate perp funding and open interest, and IBIT ETF flow. |
+
+### BTC Macro sources
+
+- **Moving averages** — CoinMetrics community API, daily closes since 2013. 2,200 days are
+  pulled so the 200-week MA has full lead-in and every charted day has a value.
+- **Fear & Greed** — alternative.me, full history back to Feb 2018.
+- **Funding / open interest** — OI-weighted aggregate across OKX and Hyperliquid. Binance
+  (HTTP 451) and Bybit (CloudFront 403) both geo-block US CI, so this is a genuine
+  cross-venue aggregate but *not* whole-market, and the UI says so.
+- **IBIT flow** — scraped from iShares' own product page. ETF shares outstanding change
+  only through creation/redemption baskets, so `Δshares × NAV` *is* the flow rather than a
+  proxy for it. No historical series exists free, so flows accrue from first run: 24h flow
+  after a day, 7d flow after a week.
+
+**Not included: BTC 1-year HODL rate.** Every free source checked either paywalls
+supply-age metrics (CoinMetrics community exposes 31 BTC metrics, none of them age-based;
+Glassnode and CryptoQuant require keys) or is unreachable. `bitcoin-data.com` looks
+viable — its `/v1/{metric}/last` pattern is live — but the correct metric slug for the 1y+
+HODL wave has not been identified yet.
 
 ### Charts
 
